@@ -228,6 +228,7 @@ pub async fn auth_callback(
                         bio: user.bio,
                         created: OffsetDateTime::now_utc(),
                         role: Role::Developer.to_string(),
+                        follows: 0,
                     }
                     .insert(&mut transaction)
                     .await?;

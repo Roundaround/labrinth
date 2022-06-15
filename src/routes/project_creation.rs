@@ -1,4 +1,5 @@
 use crate::database::models;
+use crate::database::models::notification_item::NotificationBuilder;
 use crate::file_hosting::{FileHost, FileHostingError};
 use crate::models::error::ApiError;
 use crate::models::projects::{
@@ -717,13 +718,15 @@ pub async fn project_create_inner(
                 })
                 .collect(),
         };
+        
+        use futures::stream::TryStreamExt;
 
         let users = sqlx::query!(
             "
                 SELECT follower_id FROM user_follows
                 WHERE followee_id = $1
                 ",
-            current_user.id as crate::database::models::ids::UserId
+            current_user.id.0 as i64
         )
         .fetch_many(&mut *transaction)
         .try_filter_map(|e| async {
@@ -739,11 +742,11 @@ pub async fn project_create_inner(
             text: format!(
                 "{} has released a new project: {}",
                 current_user.username,
-                project_create_data.title
+                project_builder.title.clone()
             ),
             link: format!(
                 "/{}/{}",
-                project_create_data.project_type, project_id
+                project_create_data.project_type.clone(), project_id
             ),
             actions: vec![],
         }

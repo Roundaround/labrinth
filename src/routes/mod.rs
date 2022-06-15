@@ -120,7 +120,10 @@ pub fn users_config(cfg: &mut web::ServiceConfig) {
             .service(users::user_edit)
             .service(users::user_icon_edit)
             .service(users::user_notifications)
-            .service(users::user_follows),
+            .service(users::user_follows_projects)
+            .service(users::user_follows_users)
+            .service(users::user_follow)
+            .service(users::user_unfollow),
     );
 }
 

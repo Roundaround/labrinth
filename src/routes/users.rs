@@ -1,13 +1,13 @@
-use crate::database::models::User;
+use crate::database;
 use crate::file_hosting::FileHost;
 use crate::models::notifications::Notification;
 use crate::models::projects::{Project, ProjectStatus};
-use crate::models::users::{Role, UserId};
+use crate::models::users::{User, Role, UserId};
 use crate::routes::ApiError;
 use crate::util::auth::get_user_from_headers;
 use crate::util::routes::read_from_payload;
 use crate::util::validate::validation_errors_to_string;
-use actix_web::{delete, get, patch, web, HttpRequest, HttpResponse};
+use actix_web::{delete, get, patch, post, web, HttpRequest, HttpResponse};
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -41,7 +41,9 @@ pub async fn users_get(
         .map(|x| x.into())
         .collect();
 
-    let users_data = User::get_many(user_ids, &**pool).await?;
+    let users_data =
+        database::models::User::get_many(user_ids, &**pool)
+            .await?;
 
     let users: Vec<crate::models::users::User> =
         users_data.into_iter().map(From::from).collect();
@@ -61,13 +63,13 @@ pub async fn user_get(
     let mut user_data;
 
     if let Some(id) = id_option {
-        user_data = User::get(id.into(), &**pool).await?;
+        user_data = database::models::User::get(id.into(), &**pool).await?;
 
         if user_data.is_none() {
-            user_data = User::get_from_username(string, &**pool).await?;
+            user_data = database::models::User::get_from_username(string, &**pool).await?;
         }
     } else {
-        user_data = User::get_from_username(string, &**pool).await?;
+        user_data = database::models::User::get_from_username(string, &**pool).await?;
     }
 
     if let Some(data) = user_data {
@@ -97,9 +99,9 @@ pub async fn projects_list(
 
         let project_data = if let Some(current_user) = user {
             if current_user.role.is_mod() || current_user.id == user_id {
-                User::get_projects_private(id, &**pool).await?
+                database::models::User::get_projects_private(id, &**pool).await?
             } else {
-                User::get_projects(
+                database::models::User::get_projects(
                     id,
                     ProjectStatus::Approved.as_str(),
                     &**pool,
@@ -107,7 +109,7 @@ pub async fn projects_list(
                 .await?
             }
         } else {
-            User::get_projects(id, ProjectStatus::Approved.as_str(), &**pool)
+            database::models::User::get_projects(id, ProjectStatus::Approved.as_str(), &**pool)
                 .await?
         };
 
@@ -324,7 +326,9 @@ pub async fn user_icon_edit(
             let user_id: UserId = id.into();
 
             if user.id != user_id {
-                let new_user = User::get(id, &**pool).await?;
+                let new_user =
+                    database::models::User::get(id, &**pool)
+                        .await?;
 
                 if let Some(new) = new_user {
                     icon_url = new.avatar_url;
@@ -434,7 +438,7 @@ pub async fn user_delete(
 }
 
 #[get("{id}/follows")]
-pub async fn user_project_follows(
+pub async fn user_follows_projects(
     req: HttpRequest,
     info: web::Path<(String,)>,
     pool: web::Data<PgPool>,
@@ -483,6 +487,56 @@ pub async fn user_project_follows(
     }
 }
 
+#[get("{id}/follows/users")]
+pub async fn user_follows_users(
+    req: HttpRequest,
+    info: web::Path<(String,)>,
+    pool: web::Data<PgPool>,
+) -> Result<HttpResponse, ApiError> {
+    let user = get_user_from_headers(req.headers(), &**pool).await?;
+    let id_option = crate::database::models::User::get_id_from_username_or_id(
+        &*info.into_inner().0,
+        &**pool,
+    )
+    .await?;
+
+    if let Some(id) = id_option {
+        if !user.role.is_mod() && user.id != id.into() {
+            return Err(ApiError::CustomAuthentication(
+                "You do not have permission to see the users this user follows!".to_string(),
+            ));
+        }
+
+        use futures::TryStreamExt;
+
+        let user_ids = sqlx::query!(
+            "
+            SELECT uf.followee_id FROM user_follows uf
+            WHERE uf.follower_id = $1
+            ",
+            id as crate::database::models::ids::UserId,
+        )
+        .fetch_many(&**pool)
+        .try_filter_map(|e| async {
+            Ok(e.right()
+                .map(|u| crate::database::models::UserId(u.followee_id)))
+        })
+        .try_collect::<Vec<crate::database::models::UserId>>()
+        .await?;
+
+        let users: Vec<_> =
+          crate::database::User::get_many(user_ids, &**pool)
+            .await?
+            .into_iter()
+            .map(User::from)
+            .collect();
+
+        Ok(HttpResponse::Ok().json(users))
+    } else {
+        Ok(HttpResponse::NotFound().body(""))
+    }
+}
+
 #[get("{id}/notifications")]
 pub async fn user_notifications(
     req: HttpRequest,
@@ -525,10 +579,10 @@ pub async fn user_follow(
     pool: web::Data<PgPool>,
 ) -> Result<HttpResponse, ApiError> {
     let follower = get_user_from_headers(req.headers(), &**pool).await?;
-    let string = info.into_inner().0;
+    let username = info.into_inner().0;
 
     let result = database::models::User::get_from_username(
-        &string, &**pool,
+        username, &**pool,
     )
     .await?
     .ok_or_else(|| {
@@ -542,7 +596,7 @@ pub async fn user_follow(
 
     let following = sqlx::query!(
         "
-        SELECT EXISTS(SELECT 1 FROM user_follows uf WHERE uf.follower_id = $1 AND uf.folowee_id = $2)
+        SELECT EXISTS(SELECT 1 FROM user_follows uf WHERE uf.follower_id = $1 AND uf.followee_id = $2)
         ",
         follower_id as database::models::ids::UserId,
         followee_id as database::models::ids::UserId
@@ -594,10 +648,10 @@ pub async fn user_unfollow(
     pool: web::Data<PgPool>,
 ) -> Result<HttpResponse, ApiError> {
     let follower = get_user_from_headers(req.headers(), &**pool).await?;
-    let string = info.into_inner().0;
+    let username = info.into_inner().0;
 
     let result = database::models::User::get_from_username(
-        &string, &**pool,
+        username, &**pool,
     )
     .await?
     .ok_or_else(|| {

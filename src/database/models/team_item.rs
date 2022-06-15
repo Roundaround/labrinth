@@ -155,7 +155,7 @@ impl TeamMember {
             SELECT tm.id id, tm.role member_role, tm.permissions permissions, tm.accepted accepted,
             u.id user_id, u.github_id github_id, u.name user_name, u.email email,
             u.avatar_url avatar_url, u.username username, u.bio bio,
-            u.created created, u.role user_role
+            u.created created, u.role user_role, u.follows user_follows
             FROM team_members tm
             INNER JOIN users u ON u.id = tm.user_id
             WHERE tm.team_id = $1
@@ -183,6 +183,7 @@ impl TeamMember {
                             bio: m.bio,
                             created: m.created,
                             role: m.user_role,
+                            follows: m.user_follows
                         },
                     })))
                 } else {
