@@ -434,7 +434,7 @@ pub async fn user_delete(
 }
 
 #[get("{id}/follows")]
-pub async fn user_follows(
+pub async fn user_project_follows(
     req: HttpRequest,
     info: web::Path<(String,)>,
     pool: web::Data<PgPool>,
@@ -515,5 +515,143 @@ pub async fn user_notifications(
         Ok(HttpResponse::Ok().json(notifications))
     } else {
         Ok(HttpResponse::NotFound().body(""))
+    }
+}
+
+#[post("{id}/follow")]
+pub async fn user_follow(
+    req: HttpRequest,
+    info: web::Path<(String,)>,
+    pool: web::Data<PgPool>,
+) -> Result<HttpResponse, ApiError> {
+    let follower = get_user_from_headers(req.headers(), &**pool).await?;
+    let string = info.into_inner().0;
+
+    let result = database::models::User::get_from_username(
+        &string, &**pool,
+    )
+    .await?
+    .ok_or_else(|| {
+        ApiError::InvalidInput(
+            "The specified user does not exist!".to_string(),
+        )
+    })?;
+
+    let follower_id: database::models::ids::UserId = follower.id.into();
+    let followee_id: database::models::ids::UserId = result.id;
+
+    let following = sqlx::query!(
+        "
+        SELECT EXISTS(SELECT 1 FROM user_follows uf WHERE uf.follower_id = $1 AND uf.folowee_id = $2)
+        ",
+        follower_id as database::models::ids::UserId,
+        followee_id as database::models::ids::UserId
+    )
+    .fetch_one(&**pool)
+    .await?
+    .exists
+    .unwrap_or(false);
+
+    if !following {
+        let mut transaction = pool.begin().await?;
+
+        sqlx::query!(
+            "
+            UPDATE users
+            SET follows = follows + 1
+            WHERE id = $1
+            ",
+            followee_id as database::models::ids::UserId,
+        )
+        .execute(&mut *transaction)
+        .await?;
+
+        sqlx::query!(
+            "
+            INSERT INTO user_follows (follower_id, followee_id)
+            VALUES ($1, $2)
+            ",
+            follower_id as database::models::ids::UserId,
+            followee_id as database::models::ids::UserId
+        )
+        .execute(&mut *transaction)
+        .await?;
+
+        transaction.commit().await?;
+
+        Ok(HttpResponse::NoContent().body(""))
+    } else {
+        Err(ApiError::InvalidInput(
+            "You are already following this user!".to_string(),
+        ))
+    }
+}
+
+#[delete("{id}/follow")]
+pub async fn user_unfollow(
+    req: HttpRequest,
+    info: web::Path<(String,)>,
+    pool: web::Data<PgPool>,
+) -> Result<HttpResponse, ApiError> {
+    let follower = get_user_from_headers(req.headers(), &**pool).await?;
+    let string = info.into_inner().0;
+
+    let result = database::models::User::get_from_username(
+        &string, &**pool,
+    )
+    .await?
+    .ok_or_else(|| {
+        ApiError::InvalidInput(
+            "The specified user does not exist!".to_string(),
+        )
+    })?;
+
+    let follower_id: database::models::ids::UserId = follower.id.into();
+    let followee_id = result.id;
+
+    let following = sqlx::query!(
+        "
+        SELECT EXISTS(SELECT 1 FROM user_follows uf WHERE uf.follower_id = $1 AND uf.followee_id = $2)
+        ",
+        follower_id as database::models::ids::UserId,
+        followee_id as database::models::ids::UserId
+    )
+    .fetch_one(&**pool)
+    .await?
+    .exists
+    .unwrap_or(false);
+
+    if following {
+        let mut transaction = pool.begin().await?;
+
+        sqlx::query!(
+            "
+            UPDATE users
+            SET follows = follows - 1
+            WHERE id = $1
+            ",
+            followee_id as database::models::ids::UserId,
+        )
+        .execute(&mut *transaction)
+        .await?;
+
+        sqlx::query!(
+            "
+            DELETE FROM user_follows
+            WHERE follower_id = $1 AND followee_id = $2
+            ",
+            follower_id as database::models::ids::UserId,
+            followee_id as database::models::ids::UserId
+        )
+        .execute(&mut *transaction)
+        .await?;
+
+        transaction.commit().await?;
+
+        Ok(HttpResponse::NoContent().body(""))
+    } else {
+        Err(ApiError::InvalidInput(
+            "You are not following this user!".to_string(),
+        ))
     }
 }

@@ -11,6 +11,7 @@ pub struct User {
     pub bio: Option<String>,
     pub created: OffsetDateTime,
     pub role: String,
+    pub follows: i32,
 }
 
 impl User {
@@ -54,7 +55,7 @@ impl User {
             "
             SELECT u.github_id, u.name, u.email,
                 u.avatar_url, u.username, u.bio,
-                u.created, u.role
+                u.created, u.role, u.follows
             FROM users u
             WHERE u.id = $1
             ",
@@ -74,6 +75,7 @@ impl User {
                 bio: row.bio,
                 created: row.created,
                 role: row.role,
+                follows: row.follows,
             }))
         } else {
             Ok(None)
@@ -91,7 +93,7 @@ impl User {
             "
             SELECT u.id, u.name, u.email,
                 u.avatar_url, u.username, u.bio,
-                u.created, u.role
+                u.created, u.role, u.follows
             FROM users u
             WHERE u.github_id = $1
             ",
@@ -111,6 +113,7 @@ impl User {
                 bio: row.bio,
                 created: row.created,
                 role: row.role,
+                follows: row.follows,
             }))
         } else {
             Ok(None)
@@ -128,7 +131,7 @@ impl User {
             "
             SELECT u.id, u.github_id, u.name, u.email,
                 u.avatar_url, u.bio,
-                u.created, u.role
+                u.created, u.role, u.follows
             FROM users u
             WHERE LOWER(u.username) = LOWER($1)
             ",
@@ -148,6 +151,7 @@ impl User {
                 bio: row.bio,
                 created: row.created,
                 role: row.role,
+                follows: row.follows,
             }))
         } else {
             Ok(None)
@@ -169,7 +173,7 @@ impl User {
             "
             SELECT u.id, u.github_id, u.name, u.email,
                 u.avatar_url, u.username, u.bio,
-                u.created, u.role FROM users u
+                u.created, u.role, u.follows FROM users u
             WHERE u.id = ANY($1)
             ",
             &user_ids_parsed
@@ -186,6 +190,7 @@ impl User {
                 bio: u.bio,
                 created: u.created,
                 role: u.role,
+                follows: u.follows,
             }))
         })
         .try_collect::<Vec<User>>()

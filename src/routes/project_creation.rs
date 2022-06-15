@@ -718,6 +718,38 @@ pub async fn project_create_inner(
                 .collect(),
         };
 
+        let users = sqlx::query!(
+            "
+                SELECT follower_id FROM user_follows
+                WHERE followee_id = $1
+                ",
+            current_user.id as crate::database::models::ids::UserId
+        )
+        .fetch_many(&mut *transaction)
+        .try_filter_map(|e| async {
+            Ok(e.right()
+                .map(|m| crate::database::models::ids::UserId(m.follower_id)))
+        })
+        .try_collect::<Vec<crate::database::models::ids::UserId>>()
+        .await?;
+    
+        NotificationBuilder {
+            notification_type: Some("project_create".to_string()),
+            title: format!("**{}** has released a new project!", current_user.username),
+            text: format!(
+                "{} has released a new project: {}",
+                current_user.username,
+                project_create_data.title
+            ),
+            link: format!(
+                "/{}/{}",
+                project_create_data.project_type, project_id
+            ),
+            actions: vec![],
+        }
+        .insert_many(users, &mut *transaction)
+        .await?;
+
         let now = OffsetDateTime::now_utc();
 
         let response = crate::models::projects::Project {
